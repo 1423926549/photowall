@@ -1,0 +1,64 @@
+<script setup>
+import { ref, watch, nextTick } from 'vue'
+import PhotoCard from './PhotoCard.vue'
+
+const props = defineProps({ photos: { type: Array, required: true } })
+const emit = defineEmits(['open-lightbox', 'delete-photo', 'edit-photo'])
+
+const wallRef = ref(null)
+let mounted = false
+
+watch(() => props.photos, async (list) => {
+  if (!list.length) return
+  if (!mounted) {
+    mounted = true
+    await nextTick()
+    await nextTick()
+    const children = Array.from(wallRef.value?.children || [])
+    const sorted = children
+      .map(el => ({ el, top: el.getBoundingClientRect().top }))
+      .sort((a, b) => a.top - b.top)
+    sorted.forEach(({ el }, i) => {
+      setTimeout(() => el.classList.add('mounted'), i * 100)
+    })
+  } else {
+    await nextTick()
+    const children = Array.from(wallRef.value?.children || [])
+    children.forEach(el => {
+      if (!el.classList.contains('mounted')) el.classList.add('mounted')
+    })
+  }
+})
+</script>
+
+<template>
+  <main ref="wallRef" class="photo-wall">
+    <div v-if="!photos.length" class="empty-hint">
+      还没有照片，点击右下角 + 添加第一张吧
+    </div>
+    <PhotoCard
+      v-for="(photo, i) in photos"
+      :key="photo.id"
+      :photo="photo"
+      :index="i"
+      @preview="$emit('open-lightbox', i)"
+      @deleted="id => $emit('delete-photo', id)"
+      @edit="photo => $emit('edit-photo', photo)"
+    />
+  </main>
+</template>
+
+<style scoped>
+.photo-wall {
+  max-width: 1200px; margin: 0 auto; padding: 30px 20px 20px;
+  columns: 4; column-gap: var(--card-gap);
+}
+.empty-hint {
+  text-align: center; padding: 60px;
+  color: var(--text-light);
+  font-family: 'Noto Serif SC', serif;
+}
+@media (max-width: 900px) { .photo-wall { columns: 3; } }
+@media (max-width: 640px) { .photo-wall { columns: 2; column-gap: 14px; } }
+@media (max-width: 420px) { .photo-wall { columns: 1; } }
+</style>
