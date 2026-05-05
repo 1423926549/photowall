@@ -1,6 +1,11 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { deletePhoto } from '../api'
+import { useToast } from '../composables/toast'
+import { useConfirm } from '../composables/confirm'
+
+const { show: toast } = useToast()
+const { open: confirmOpen } = useConfirm()
 
 const props = defineProps({
   photo: { type: Object, required: true },
@@ -34,7 +39,6 @@ function onDownload() {
   const a = document.createElement('a')
   a.href = props.photo.url
   a.download = props.photo.date + '_' + (props.photo.note || 'photo') + '.jpg'
-  a.target = '_blank'
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
@@ -47,12 +51,14 @@ function onEdit() {
 
 async function onDelete() {
   closeMenu()
-  if (!confirm('确定要删除这张照片吗？')) return
+  const ok = await confirmOpen('确认删除', '确定要删除这张照片吗？')
+  if (!ok) return
   try {
     await deletePhoto(props.photo.id)
     emit('deleted', props.photo.id)
+    toast('删除成功', 'success')
   } catch (e) {
-    alert('删除失败: ' + e.message)
+    toast('删除失败: ' + e.message, 'error')
   }
 }
 </script>

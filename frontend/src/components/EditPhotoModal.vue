@@ -1,6 +1,9 @@
 <script setup>
 import { ref } from 'vue'
 import { updatePhoto } from '../api'
+import { useToast } from '../composables/toast'
+
+const { show: toast } = useToast()
 
 const props = defineProps({ photo: { type: Object, required: true } })
 const emit = defineEmits(['close', 'updated'])
@@ -16,7 +19,7 @@ async function submit() {
     await updatePhoto(props.photo.id, dateStr, note.value)
     emit('updated', { id: props.photo.id, date: dateStr, note: note.value })
   } catch (e) {
-    alert('保存失败: ' + e.message)
+    toast('保存失败: ' + e.message, 'error')
   } finally {
     saving.value = false
   }

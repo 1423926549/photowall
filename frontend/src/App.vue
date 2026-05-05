@@ -5,6 +5,8 @@ import PhotoWall from './components/PhotoWall.vue'
 import Lightbox from './components/Lightbox.vue'
 import AddPhotoModal from './components/AddPhotoModal.vue'
 import EditPhotoModal from './components/EditPhotoModal.vue'
+import ToastContainer from './components/ToastContainer.vue'
+import ConfirmDialog from './components/ConfirmDialog.vue'
 import { fetchPhotos } from './api'
 
 const photos = ref([])
@@ -132,6 +134,9 @@ onUnmounted(() => {
     @close="editingPhoto = null"
     @updated="onPhotoEdited"
   />
+
+  <ToastContainer />
+  <ConfirmDialog />
 
 </template>
 

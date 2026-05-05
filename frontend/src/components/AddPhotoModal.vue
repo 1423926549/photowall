@@ -1,6 +1,9 @@
 <script setup>
 import { ref } from 'vue'
 import { uploadPhoto } from '../api'
+import { useToast } from '../composables/toast'
+
+const { show: toast } = useToast()
 
 const emit = defineEmits(['close', 'added'])
 
@@ -25,7 +28,7 @@ function removeFile(idx) {
 }
 
 async function submit() {
-  if (!files.value.length) return alert('请选择照片')
+  if (!files.value.length) return toast('请选择照片', 'info')
   uploading.value = true
   progress.value = { done: 0, total: files.value.length }
   const dateStr = dateVal.value.replace(/-/g, '.')
