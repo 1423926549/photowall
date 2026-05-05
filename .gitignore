@@ -17,6 +17,7 @@ __pycache__/
 venv/
 .venv/
 .env
+*.db
 
 # Node
 node_modules/

@@ -1,35 +1,28 @@
 """
-PhotoWall Backend — FastAPI + SQLite + Volcengine TOS
+PhotoWall Backend — Flask + Supabase (PostgreSQL) + Volcengine TOS
 """
 import uuid
-import aiosqlite
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from flask import Flask, jsonify, request
+from flask_cors import CORS
+from psycopg2.pool import ThreadedConnectionPool
 import tos
 
 from config import (
     TOS_ACCESS_KEY, TOS_SECRET_KEY, TOS_ENDPOINT,
-    TOS_REGION, TOS_BUCKET, DB_PATH, LISTEN_HOST, LISTEN_PORT,
+    TOS_REGION, TOS_BUCKET, SUPABASE_DATABASE_URL,
+    LISTEN_HOST, LISTEN_PORT,
 )
 
-app = FastAPI(title="PhotoWall API")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = Flask(__name__)
+CORS(app)
 
 # ─────────────────────────────────────────
-# TOS Client (官方 SDK)
+# TOS Client
 # ─────────────────────────────────────────
-tos = tos.TosClientV2(
+tos_client = tos.TosClientV2(
     ak=TOS_ACCESS_KEY,
     sk=TOS_SECRET_KEY,
     endpoint=TOS_ENDPOINT,
@@ -37,70 +30,48 @@ tos = tos.TosClientV2(
 )
 
 # ─────────────────────────────────────────
-# SQLite
+# Supabase PostgreSQL (psycopg2)
 # ─────────────────────────────────────────
-async def get_db() -> aiosqlite.Connection:
-    db = await aiosqlite.connect(DB_PATH)
-    db.row_factory = aiosqlite.Row
-    return db
+_pool: ThreadedConnectionPool | None = None
 
 
-async def init_db():
-    db = await get_db()
-    await db.execute("""
-        CREATE TABLE IF NOT EXISTS photos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            object_key TEXT NOT NULL,
-            url TEXT NOT NULL,
-            date TEXT NOT NULL DEFAULT '',
-            note TEXT NOT NULL DEFAULT '',
-            deleted INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT DEFAULT (datetime('now','localtime'))
-        )
-    """)
-    # Migration: add deleted column if upgrading from old schema
-    try:
-        await db.execute("ALTER TABLE photos ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0")
-    except Exception:
-        pass  # column already exists
-    await db.commit()
-    await db.close()
+def get_pool() -> ThreadedConnectionPool:
+    global _pool
+    if _pool is None:
+        _pool = ThreadedConnectionPool(1, 10, SUPABASE_DATABASE_URL)
+    return _pool
 
 
-@app.on_event("startup")
-async def startup():
-    await init_db()
-    print(f"[DB] SQLite initialized: {DB_PATH}")
-    print(f"[TOS] Endpoint: {TOS_ENDPOINT}  Bucket: {TOS_BUCKET}")
+def get_conn():
+    return get_pool().getconn()
 
 
-# ─────────────────────────────────────────
-# Models
-# ─────────────────────────────────────────
-class PhotoOut(BaseModel):
-    id: int
-    object_key: str
-    url: str
-    date: str
-    note: str
-    created_at: str
-
-
-class PhotoUpdate(BaseModel):
-    date: str | None = None
-    note: str | None = None
+def put_conn(conn):
+    get_pool().putconn(conn)
 
 
 # ─────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────
-def upload_to_tos(data: bytes, filename: str) -> tuple[str, str]:
-    """Upload to TOS, return (object_key, public_url)."""
+def _row_to_dict(row, cur) -> dict:
+    cols = [desc[0] for desc in cur.description]
+    return dict(zip(cols, row))
+
+
+def _serialize(val):
+    if isinstance(val, datetime):
+        return val.isoformat()
+    if isinstance(val, date):
+        return val.strftime("%Y.%m.%d")
+    return val
+
+
+def _upload_to_tos(data: bytes, filename: str) -> tuple[str, str]:
     ext = Path(filename).suffix or ".jpg"
     key = f"photos/{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:6]}{ext}"
 
     try:
-        resp = tos.put_object(
+        resp = tos_client.put_object(
             bucket=TOS_BUCKET,
             key=key,
             content=data,
@@ -110,132 +81,133 @@ def upload_to_tos(data: bytes, filename: str) -> tuple[str, str]:
     except Exception as e:
         raise RuntimeError(f"TOS put_object error: {e}")
 
-    # Public URL
-    url = f"https://{TOS_BUCKET}.tos-cn-shanghai.volces.com/{key}"
-    return key, url
+    return key, f"https://{TOS_BUCKET}.tos-cn-shanghai.volces.com/{key}"
 
 
-def delete_from_tos(key: str):
-    """Delete object from TOS."""
+def _delete_from_tos(key: str):
     try:
-        tos.delete_object(bucket=TOS_BUCKET, key=key)
+        tos_client.delete_object(bucket=TOS_BUCKET, key=key)
     except Exception:
-        pass  # best-effort
+        pass
 
 
 # ─────────────────────────────────────────
 # API Routes
 # ─────────────────────────────────────────
-@app.get("/api/photos")
-async def list_photos():
-    db = await get_db()
+@app.route("/api/photos", methods=["GET"])
+def list_photos():
+    conn = get_conn()
     try:
-        cursor = await db.execute(
-            "SELECT id, object_key, url, date, note, created_at "
-            "FROM photos WHERE deleted = 0 ORDER BY date ASC"
-        )
-        rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, object_key, url, date, note, created_at "
+                "FROM photos WHERE deleted = false ORDER BY date ASC"
+            )
+            rows = cur.fetchall()
+            photos = [
+                {k: _serialize(v) for k, v in _row_to_dict(row, cur).items()}
+                for row in rows
+            ]
+        return jsonify(photos)
     finally:
-        await db.close()
+        put_conn(conn)
 
 
-@app.post("/api/photos", response_model=PhotoOut)
-async def upload_photo(
-    photo: UploadFile = File(...),
-    date: str = Form(""),
-    note: str = Form(""),
-):
-    data = await photo.read()
+@app.route("/api/photos", methods=["POST"])
+def upload_photo():
+    photo = request.files.get("photo")
+    if not photo:
+        return jsonify({"error": "No photo provided"}), 400
 
-    # Upload to TOS
+    data = photo.read()
+    date_str = request.form.get("date", "") or datetime.now().strftime("%Y.%m.%d")
+    note = request.form.get("note", "") or "美好的回忆"
+    # Convert yyyy.MM.dd → yyyy-MM-dd for PostgreSQL DATE column
+    date_val = date_str.replace(".", "-")
+
     try:
-        key, url = upload_to_tos(data, photo.filename or "photo.jpg")
+        key, url = _upload_to_tos(data, photo.filename or "photo.jpg")
     except Exception as e:
-        raise HTTPException(500, f"TOS upload failed: {e}")
+        return jsonify({"error": f"TOS upload failed: {e}"}), 500
 
-    if not date:
-        date = datetime.now().strftime("%Y.%m.%d")
-    if not note:
-        note = "美好的回忆"
-
-    db = await get_db()
+    conn = get_conn()
     try:
-        cursor = await db.execute(
-            "INSERT INTO photos (object_key, url, date, note) VALUES (?, ?, ?, ?)",
-            (key, url, date, note),
-        )
-        await db.commit()
-        photo_id = cursor.lastrowid
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO photos (object_key, url, date, note) "
+                "VALUES (%s, %s, %s, %s) RETURNING id",
+                (key, url, date_val, note),
+            )
+            photo_id = cur.fetchone()[0]
+        conn.commit()
     except Exception as e:
-        delete_from_tos(key)
-        raise HTTPException(500, f"DB insert failed: {e}")
+        _delete_from_tos(key)
+        return jsonify({"error": f"DB insert failed: {e}"}), 500
     finally:
-        await db.close()
+        put_conn(conn)
 
-    return {
+    return jsonify({
         "id": photo_id,
         "object_key": key,
         "url": url,
-        "date": date,
+        "date": date_str,
         "note": note,
         "created_at": datetime.now().isoformat(),
-    }
+    }), 201
 
 
-@app.put("/api/photos/{photo_id}")
-async def update_photo(photo_id: int, body: PhotoUpdate):
-    db = await get_db()
+@app.route("/api/photos/<int:photo_id>", methods=["PUT"])
+def update_photo(photo_id):
+    body = request.get_json(silent=True) or {}
+    updates = {}
+    if "date" in body and body["date"] is not None:
+        updates["date"] = body["date"].replace(".", "-")
+    if "note" in body and body["note"] is not None:
+        updates["note"] = body["note"]
+    if not updates:
+        return jsonify({"status": "nothing to update"})
+
+    set_clause = ", ".join(f"{k} = %s" for k in updates)
+    values = list(updates.values()) + [photo_id]
+
+    conn = get_conn()
     try:
-        fields = []
-        values = []
-        if body.date is not None:
-            fields.append("date = ?")
-            values.append(body.date)
-        if body.note is not None:
-            fields.append("note = ?")
-            values.append(body.note)
-        if not fields:
-            return {"status": "nothing to update"}
-        values.append(photo_id)
-        await db.execute(f"UPDATE photos SET {', '.join(fields)} WHERE id = ?", values)
-        await db.commit()
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE photos SET {set_clause} WHERE id = %s", values
+            )
+        conn.commit()
     finally:
-        await db.close()
-    return {"status": "updated"}
+        put_conn(conn)
+
+    return jsonify({"status": "updated"})
 
 
-@app.delete("/api/photos/{photo_id}")
-async def delete_photo(photo_id: int):
-    """Soft delete — only marks deleted=1, does not touch TOS."""
-    db = await get_db()
+@app.route("/api/photos/<int:photo_id>", methods=["DELETE"])
+def delete_photo(photo_id):
+    """Soft delete — only marks deleted=true."""
+    conn = get_conn()
     try:
-        cursor = await db.execute(
-            "SELECT id FROM photos WHERE id = ? AND deleted = 0", (photo_id,)
-        )
-        row = await cursor.fetchone()
-        if not row:
-            raise HTTPException(404, "photo not found")
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM photos WHERE id = %s AND deleted = false",
+                (photo_id,),
+            )
+            if not cur.fetchone():
+                return jsonify({"error": "photo not found"}), 404
 
-        await db.execute("UPDATE photos SET deleted = 1 WHERE id = ?", (photo_id,))
-        await db.commit()
+            cur.execute(
+                "UPDATE photos SET deleted = true WHERE id = %s", (photo_id,)
+            )
+        conn.commit()
     finally:
-        await db.close()
+        put_conn(conn)
 
-    return {"status": "deleted"}
-
-
-# ─────────────────────────────────────────
-# Frontend static serving (production)
-# ─────────────────────────────────────────
-frontend_dir = Path(__file__).parent.parent / "frontend" / "dist"
-if frontend_dir.exists():
-    app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
+    return jsonify({"status": "deleted"})
 
 
 # ─────────────────────────────────────────
 # Entry point
 # ─────────────────────────────────────────
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host=LISTEN_HOST, port=LISTEN_PORT, reload=True)
+    app.run(host=LISTEN_HOST, port=LISTEN_PORT, debug=True)
