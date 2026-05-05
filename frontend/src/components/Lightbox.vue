@@ -1,8 +1,11 @@
 <script setup>
-import { onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
+import { isVideoUrl } from '../composables/media'
 
 const props = defineProps({ photo: { type: Object, required: true } })
 const emit = defineEmits(['close', 'prev', 'next'])
+
+const isVideo = computed(() => isVideoUrl(props.photo.url))
 
 function onKey(e) {
   if (e.key === 'Escape') emit('close')
@@ -26,7 +29,8 @@ onUnmounted(() => {
     <button class="lb-nav lb-prev" @click="$emit('prev')">&lsaquo;</button>
     <button class="lb-nav lb-next" @click="$emit('next')">&rsaquo;</button>
     <div class="lb-content">
-      <img :src="photo.url" :alt="photo.note" />
+      <video v-if="isVideo" :src="photo.url" controls autoplay class="lb-video" />
+      <img v-else :src="photo.url" :alt="photo.note" />
       <div class="lb-info">
         <div class="lb-date">{{ photo.date }}</div>
         <div class="lb-note">{{ photo.note }}</div>
@@ -67,11 +71,13 @@ onUnmounted(() => {
   max-width: 85vw; max-height: 80vh;
   display: flex; flex-direction: column; align-items: center;
 }
-.lb-content img {
+.lb-content img,
+.lb-content video {
   max-width: 85vw; max-height: 75vh; object-fit: contain;
   border-radius: 10px; box-shadow: 0 8px 40px rgba(0,0,0,0.5);
   border: 3px solid rgba(255,255,255,0.15);
 }
+.lb-video { outline: none; }
 .lb-info { margin-top: 14px; text-align: center; color: rgba(255,255,255,0.85); }
 .lb-date { font-family: 'Noto Serif SC', serif; font-size: 14px; letter-spacing: 2px; }
 .lb-note { font-family: 'Long Cang', cursive; font-size: 20px; color: #90AFC5; margin-top: 2px; }

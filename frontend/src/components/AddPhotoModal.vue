@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { uploadPhoto } from '../api'
 import { useToast } from '../composables/toast'
+import { isVideoFile } from '../composables/media'
 
 const { show: toast } = useToast()
 
@@ -52,14 +53,15 @@ async function submit() {
 <template>
   <div class="modal-overlay" @click.self="$emit('close')">
     <div class="modal">
-      <h3>添加照片</h3>
+      <h3>添加照片/视频</h3>
 
-      <label>选择照片（可多选）</label>
+      <label>选择文件（可多选）</label>
       <label class="file-picker" :class="{ 'has-files': files.length }">
         <template v-if="files.length">
           <div class="preview-grid">
             <div v-for="(item, i) in files" :key="i" class="preview-item">
-              <img :src="item.preview" />
+              <video v-if="isVideoFile(item)" :src="item.preview" muted />
+              <img v-else :src="item.preview" />
               <button class="remove-btn" @click.prevent.stop="removeFile(i)">&times;</button>
               <span class="file-name">{{ item.name }}</span>
             </div>
@@ -69,12 +71,12 @@ async function submit() {
         <template v-else>
           <div class="picker-placeholder">
             <span class="picker-icon">+</span>
-            <span class="picker-text">点击选择照片</span>
+            <span class="picker-text">点击选择照片/视频</span>
           </div>
         </template>
-        <input type="file" accept="image/*" multiple @change="onFileChange" hidden />
+        <input type="file" accept="image/*,video/*" multiple @change="onFileChange" hidden />
       </label>
-      <div v-if="files.length" class="file-count">已选择 {{ files.length }} 张照片</div>
+      <div v-if="files.length" class="file-count">已选择 {{ files.length }} 个文件</div>
 
       <label>日期</label>
       <div class="date-input-wrap">
@@ -150,7 +152,8 @@ async function submit() {
   position: relative; aspect-ratio: 1;
   border-radius: 6px; overflow: hidden; background: #e8ecf0;
 }
-.preview-item img {
+.preview-item img,
+.preview-item video {
   width: 100%; height: 100%; object-fit: cover; display: block;
 }
 .remove-btn {

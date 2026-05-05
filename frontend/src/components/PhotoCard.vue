@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { deletePhoto } from '../api'
 import { useToast } from '../composables/toast'
 import { useConfirm } from '../composables/confirm'
+import { isVideoUrl } from '../composables/media'
 
 const { show: toast } = useToast()
 const { open: confirmOpen } = useConfirm()
@@ -15,6 +16,8 @@ const emit = defineEmits(['deleted', 'edit', 'preview'])
 
 const imgLoaded = ref(false)
 const contextMenu = ref({ show: false, x: 0, y: 0 })
+
+const isVideo = computed(() => isVideoUrl(props.photo.url))
 
 const rotate = computed(() => {
   const n = (props.photo.id * 7 + 3) % 11
@@ -36,9 +39,11 @@ function closeMenu() {
 
 function onDownload() {
   closeMenu()
+  const url = props.photo.url
+  const ext = url.split('?')[0].split('.').pop() || 'jpg'
   const a = document.createElement('a')
-  a.href = props.photo.url
-  a.download = props.photo.date + '_' + (props.photo.note || 'photo') + '.jpg'
+  a.href = url
+  a.download = props.photo.date + '_' + (props.photo.note || 'photo') + '.' + ext
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
@@ -71,7 +76,12 @@ async function onDelete() {
     @contextmenu="onContextMenu"
   >
     <div v-if="!imgLoaded" class="skeleton" />
+    <template v-if="isVideo">
+      <video :src="photo.url" muted preload="metadata" @loadeddata="imgLoaded = true" @error="imgLoaded = true" />
+      <div class="video-play-overlay">▶</div>
+    </template>
     <img
+      v-else
       :src="photo.url"
       :alt="photo.note"
       :class="{ loading: !imgLoaded }"
@@ -122,13 +132,28 @@ async function onDelete() {
   box-shadow: 4px 8px 28px var(--shadow-strong), 0 2px 8px rgba(0,0,0,0.08);
   z-index: 10;
 }
-.photo-card img {
+.photo-card img,
+.photo-card video {
   width: 100%; height: auto; display: block; border-radius: 2px;
   background: #F0F4F8;
   transition: opacity 0.4s ease;
   user-select: none; pointer-events: none;
 }
 .photo-card img.loading { opacity: 0.4; }
+.video-play-overlay {
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 48px; height: 48px; border-radius: 50%;
+  background: rgba(0,0,0,0.55);
+  color: #fff; font-size: 20px;
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: none;
+  transition: transform 0.25s ease, background 0.25s ease;
+}
+.photo-card:hover .video-play-overlay {
+  transform: translate(-50%, -50%) scale(1.15);
+  background: rgba(0,0,0,0.7);
+}
 .card-date {
   position: absolute; bottom: 10px; left: 16px;
   font-family: 'Long Cang', cursive; font-size: 17px;
