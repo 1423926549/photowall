@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: photowall-api
+    runtime: python
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && gunicorn main:app --bind 0.0.0.0:$PORT --preload
+    envVars:
+      - key: SUPABASE_DATABASE_URL
+        sync: false
+      - key: TOS_ACCESS_KEY
+        sync: false
+      - key: TOS_SECRET_KEY
+        sync: false
+      - key: TOS_ENDPOINT
+        sync: false
+      - key: TOS_REGION
+        sync: false
+      - key: TOS_BUCKET
+        sync: false
